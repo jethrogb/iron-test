@@ -57,16 +57,14 @@ pub fn request<H: Handler>(client_addr: Option<SocketAddr>,
                             handler: &H) -> IronResult<Response> {
     let content_length = body.len() as u64;
     let data = Cursor::new(body.as_bytes().to_vec());
-    let client_addr = client_addr.unwrap_or("127.0.0.1:3000".parse().unwrap());
+    let client_addr = client_addr.unwrap_or("192.0.2.1:3000".parse().unwrap());
     let mut stream = MockStream::new(client_addr, data);
     let mut reader = BufReader::new(&mut stream as &mut NetworkStream);
     let reader = HttpReader::SizedReader(&mut reader, content_length);
 
     let url = url::Url::parse(path).unwrap();
-    let server_port = url.port_or_known_default().unwrap_or(80);
-    let server_addr = url.host_str().and_then(|host| format!("{}:{}", host, server_port).parse().ok())
-        .unwrap_or("127.0.0.1:80".parse().unwrap());
-    let url = Url::from_generic_url(url).unwrap();
+    let server_ip = url.host_str().and_then(|host_str| host_str.parse().ok()).expect("url hostname must be valid ip address");
+    let server_addr = SocketAddr::new(server_ip, url.port_or_known_default().unwrap_or(80));
 
     if !headers.has::<headers::UserAgent>() {
         headers.set(headers::UserAgent("iron-test".to_string()));
@@ -75,7 +73,7 @@ pub fn request<H: Handler>(client_addr: Option<SocketAddr>,
 
     let mut req = Request {
         method: method,
-        url: url,
+        url:  Url::from_generic_url(url).unwrap(),
         body: Body::new(reader),
         local_addr: server_addr,
         remote_addr: client_addr,
@@ -198,7 +196,7 @@ mod test {
 
     #[test]
     fn test_get() {
-        let response = get("http://localhost:3000", Headers::new(), &HelloWorldHandler);
+        let response = get("http://127.0.0.1:3000", Headers::new(), &HelloWorldHandler);
         let result = extract_body_to_bytes(response.unwrap());
 
         assert_eq!(result, b"Hello, world!");
@@ -209,7 +207,7 @@ mod test {
         let mut headers = Headers::new();
         let mime: Mime = "application/x-www-form-urlencoded".parse().unwrap();
         headers.set(headers::ContentType(mime));
-        let response = post("http://localhost:3000/users",
+        let response = post("http://127.0.0.1:3000/users",
                             headers,
                             "first_name=Example&last_name=User",
                             &PostHandler);
@@ -226,7 +224,7 @@ mod test {
         let mut headers = Headers::new();
         let mime: Mime = "application/x-www-form-urlencoded".parse().unwrap();
         headers.set(headers::ContentType(mime));
-        let response = patch("http://localhost:3000/users/1",
+        let response = patch("http://127.0.0.1:3000/users/1",
                              headers,
                              "first_name=Example&last_name=User",
                              &router);
@@ -243,7 +241,7 @@ mod test {
         let mut headers = Headers::new();
         let mime: Mime = "application/x-www-form-urlencoded".parse().unwrap();
         headers.set(headers::ContentType(mime));
-        let response = put("http://localhost:3000/users/2",
+        let response = put("http://127.0.0.1:3000/users/2",
                            headers,
                            "first_name=Example&last_name=User",
                            &router);
@@ -257,7 +255,7 @@ mod test {
         let mut router = router::Router::new();
         router.delete("/:id", RouterHandler);
 
-        let response = delete("http://localhost:3000/1", Headers::new(), &router);
+        let response = delete("http://127.0.0.1:3000/1", Headers::new(), &router);
         let result = extract_body_to_bytes(response.unwrap());
 
         assert_eq!(result, b"1");
@@ -266,7 +264,7 @@ mod test {
 
     #[test]
     fn test_options() {
-        let response = options("http://localhost:3000/users/options", Headers::new(), &OptionsHandler);
+        let response = options("http://127.0.0.1:3000/users/options", Headers::new(), &OptionsHandler);
         let result = extract_body_to_bytes(response.unwrap());
 
         assert_eq!(result, b"ALLOW: GET,POST");
@@ -274,7 +272,7 @@ mod test {
 
     #[test]
     fn test_head() {
-        let response = head("http://localhost:3000/users", Headers::new(), &HeadHandler);
+        let response = head("http://127.0.0.1:3000/users", Headers::new(), &HeadHandler);
         let result = extract_body_to_bytes(response.unwrap());
 
         assert_eq!(result, []);
@@ -283,7 +281,7 @@ mod test {
     #[test]
     fn test_user_agent_not_provided() {
         let headers = Headers::new();
-        let response = get("http://localhost:3000/", headers, &UserAgentHandler);
+        let response = get("http://127.0.0.1:3000/", headers, &UserAgentHandler);
         let result = extract_body_to_string(response.unwrap());
 
         assert_eq!(result, "iron-test");
@@ -293,7 +291,7 @@ mod test {
     fn test_user_agent_provided() {
         let mut headers = Headers::new();
         headers.set(headers::UserAgent("CustomAgent/1.0".to_owned()));
-        let response = get("http://localhost:3000/", headers, &UserAgentHandler);
+        let response = get("http://127.0.0.1:3000/", headers, &UserAgentHandler);
         let result = extract_body_to_string(response.unwrap());
 
         assert_eq!(result, "CustomAgent/1.0");
@@ -301,17 +299,26 @@ mod test {
 
     #[test]
     fn test_client_addr() {
-        let response = request(Some("127.0.0.1:1234".parse().unwrap()), method::Method::Get, "http://localhost:3000/", "", Headers::new(), &ClientAddrHandler);
+        let response = request(Some("127.0.0.1:1234".parse().unwrap()), method::Method::Get, "http://127.0.0.1:3000/", "", Headers::new(), &ClientAddrHandler);
         let result = extract_body_to_string(response.unwrap());
 
         assert_eq!(result, "127.0.0.1:1234");
     }
 
     #[test]
-    fn test_server_addr() {
-        let response = request(None, method::Method::Get, "http://127.0.0.1:3000/", "", Headers::new(), &ServerAddrHandler);
+    fn test_client_addr_default() {
+        let response = request(None, method::Method::Get, "http://127.0.0.1:3000/", "", Headers::new(), &ClientAddrHandler);
         let result = extract_body_to_string(response.unwrap());
 
-        assert_eq!(result, "127.0.0.1:3000");
+        assert_eq!(result, "192.0.2.1:3000");
     }
+
+    #[test]
+    fn test_server_addr() {
+        let response = request(None, method::Method::Get, "http://127.0.0.1:80/", "", Headers::new(), &ServerAddrHandler);
+        let result = extract_body_to_string(response.unwrap());
+
+        assert_eq!(result, "127.0.0.1:80");
+    }
+
 }
