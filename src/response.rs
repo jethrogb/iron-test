@@ -42,7 +42,7 @@ mod test {
 
     #[test]
     fn test_extract_body_to_string() {
-        let response = request::get("http://localhost:3000",
+        let response = request::get("http://127.0.0.1:3000",
                            Headers::new(),
                            &HelloWorldHandler);
         let result = extract_body_to_string(response.unwrap());
@@ -52,7 +52,7 @@ mod test {
 
     #[test]
     fn test_extract_body_to_bytes() {
-        let response = request::get("http://localhost:3000",
+        let response = request::get("http://127.0.0.1:3000",
                            Headers::new(),
                            &HelloWorldHandler);
         let result = extract_body_to_bytes(response.unwrap());
