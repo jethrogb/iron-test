@@ -9,19 +9,21 @@ use std::time::Duration;
 /// A mock network stream
 #[derive(Clone)]
 pub struct MockStream<T> {
+    peer_addr: SocketAddr,
     data: T
 }
 
 impl<T> MockStream<T> {
-    /// Create a new mock stream that reads from the given data
-    pub fn new(data: T) -> MockStream<T> {
-        MockStream { data: data }
+    /// Create a new mock stream that originates from the given peer address and reads from the
+    /// given data
+    pub fn new(peer_addr: SocketAddr, data: T) -> MockStream<T> {
+        MockStream { peer_addr, data }
     }
 }
 
 impl<T: Send + Read + Write + Clone + Any> NetworkStream for MockStream<T> {
     fn peer_addr(&mut self) -> Result<SocketAddr> {
-        Ok("127.0.0.1:3000".parse().unwrap())
+        Ok(self.peer_addr)
     }
 
     fn set_read_timeout(&self, _: Option<Duration>) -> Result<()> {

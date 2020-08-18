@@ -10,45 +10,47 @@ use iron::{Handler, headers, Headers, method, Url};
 use std::io::Cursor;
 
 use super::mock_stream::MockStream;
+use std::net::SocketAddr;
 
 /// Convenience method for making GET requests to Iron Handlers.
 pub fn get<H: Handler>(path: &str, headers: Headers, handler: &H) -> IronResult<Response> {
-    request(method::Get, path, "", headers, handler)
+    request(None, method::Get, path, "", headers, handler)
 }
 
 /// Convenience method for making POST requests with a body to Iron Handlers.
 pub fn post<H: Handler>(path: &str, headers: Headers, body: &str, handler: &H) -> IronResult<Response> {
-    request(method::Post, path, body, headers, handler)
+    request(None, method::Post, path, body, headers, handler)
 }
 
 /// Convenience method for making PATCH requests with a body to Iron Handlers.
 pub fn patch<H: Handler>(path: &str, headers: Headers, body: &str, handler: &H) -> IronResult<Response> {
-    request(method::Patch, path, body, headers, handler)
+    request(None, method::Patch, path, body, headers, handler)
 }
 
 /// Convenience method for making PUT requests with a body to Iron Handlers.
 pub fn put<H: Handler>(path: &str, headers: Headers, body: &str, handler: &H) -> IronResult<Response> {
-    request(method::Put, path, body, headers, handler)
+    request(None, method::Put, path, body, headers, handler)
 }
 
 /// Convenience method for making DELETE requests to Iron Handlers.
 pub fn delete<H: Handler>(path: &str, headers: Headers, handler: &H) -> IronResult<Response> {
-    request(method::Delete, path, "", headers, handler)
+    request(None, method::Delete, path, "", headers, handler)
 }
 
 /// Convenience method for making OPTIONS requests to Iron Handlers.
 pub fn options<H: Handler>(path: &str, headers: Headers, handler: &H) -> IronResult<Response> {
-    request(method::Options, path, "", headers, handler)
+    request(None, method::Options, path, "", headers, handler)
 }
 
 /// Convenience method for making HEAD requests to Iron Handlers.
 pub fn head<H: Handler>(path: &str, headers: Headers, handler: &H) -> IronResult<Response> {
-    request(method::Head, path, "", headers, handler)
+    request(None, method::Head, path, "", headers, handler)
 }
 
 /// Constructs an Iron::Request from the given parts and passes it to the
 /// `handle` method on the given Handler.
-pub fn request<H: Handler>(method: method::Method,
+pub fn request<H: Handler>(client_addr: Option<SocketAddr>,
+                           method: method::Method,
                            path: &str,
                            body: &str,
                            headers: Headers,
@@ -69,17 +71,25 @@ pub fn request<H: Handler>(method: method::Method,
     buffer.push_str("\r\n");
     buffer.push_str(body);
 
-    let addr = "127.0.0.1:3000".parse().unwrap();
     let protocol = match url.scheme() {
         "http" => iron::Protocol::http(),
         "https" => iron::Protocol::https(),
         _ => panic!("unknown protocol {}", url.scheme()),
     };
 
-    let mut stream = MockStream::new(Cursor::new(buffer.as_bytes().to_vec()));
-    let mut buf_reader = BufReader::new(&mut stream as &mut NetworkStream);
-    let http_request = hyper::server::Request::new(&mut buf_reader, addr).unwrap();
-    let mut req = Request::from_http(http_request, addr, &protocol).unwrap();
+    let url = url::Url::parse(path).unwrap();
+
+    // Lookup the host string, if it's a domain just convert it to 127.0.0.1, if it's an ip address keep it.
+    let server_ip : std::net::IpAddr = url.host_str().unwrap().parse().or_else(|_| "127.0.0.1".parse()).unwrap();
+    let server_addr = SocketAddr::new(server_ip, url.port_or_known_default().unwrap_or(80));
+
+    let client_addr = client_addr.unwrap_or("127.0.0.1:3000".parse().unwrap());
+    let mut stream = MockStream::new(client_addr, Cursor::new(buffer.as_bytes().to_vec()));
+    let mut buf_reader = BufReader::new(&mut stream as &mut dyn NetworkStream);
+
+
+    let http_request = hyper::server::Request::new(&mut buf_reader, client_addr).unwrap();
+    let mut req = Request::from_http(http_request, server_addr, &protocol).unwrap();
 
     handler.handle(&mut req)
 }
@@ -179,9 +189,25 @@ mod test {
         }
     }
 
+    struct ClientAddrHandler;
+
+    impl Handler for ClientAddrHandler {
+        fn handle(&self, req: &mut Request) -> IronResult<Response> {
+            Ok(Response::with((status::Ok, req.remote_addr.to_string())))
+        }
+    }
+
+    struct ServerAddrHandler;
+
+    impl Handler for ServerAddrHandler {
+        fn handle(&self, req: &mut Request) -> IronResult<Response> {
+            Ok(Response::with((status::Ok, req.local_addr.to_string())))
+        }
+    }
+
     #[test]
     fn test_get() {
-        let response = get("http://localhost:3000", Headers::new(), &HelloWorldHandler);
+        let response = get("http://127.0.0.1:3000", Headers::new(), &HelloWorldHandler);
         let result = extract_body_to_bytes(response.unwrap());
 
         assert_eq!(result, b"Hello, world!");
@@ -192,7 +218,7 @@ mod test {
         let mut headers = Headers::new();
         let mime: Mime = "application/x-www-form-urlencoded".parse().unwrap();
         headers.set(headers::ContentType(mime));
-        let response = post("http://localhost:3000/users",
+        let response = post("http://127.0.0.1:3000/users",
                             headers,
                             "first_name=Example&last_name=User",
                             &PostHandler);
@@ -209,7 +235,7 @@ mod test {
         let mut headers = Headers::new();
         let mime: Mime = "application/x-www-form-urlencoded".parse().unwrap();
         headers.set(headers::ContentType(mime));
-        let response = patch("http://localhost:3000/users/1",
+        let response = patch("http://127.0.0.1:3000/users/1",
                              headers,
                              "first_name=Example&last_name=User",
                              &router);
@@ -226,7 +252,7 @@ mod test {
         let mut headers = Headers::new();
         let mime: Mime = "application/x-www-form-urlencoded".parse().unwrap();
         headers.set(headers::ContentType(mime));
-        let response = put("http://localhost:3000/users/2",
+        let response = put("http://127.0.0.1:3000/users/2",
                            headers,
                            "first_name=Example&last_name=User",
                            &router);
@@ -240,7 +266,7 @@ mod test {
         let mut router = router::Router::new();
         router.delete("/:id", RouterHandler, "update");
 
-        let response = delete("http://localhost:3000/1", Headers::new(), &router);
+        let response = delete("http://127.0.0.1:3000/1", Headers::new(), &router);
         let result = extract_body_to_bytes(response.unwrap());
 
         assert_eq!(result, b"1");
@@ -249,7 +275,7 @@ mod test {
 
     #[test]
     fn test_options() {
-        let response = options("http://localhost:3000/users/options", Headers::new(), &OptionsHandler);
+        let response = options("http://127.0.0.1:3000/users/options", Headers::new(), &OptionsHandler);
         let result = extract_body_to_bytes(response.unwrap());
 
         assert_eq!(result, b"ALLOW: GET,POST");
@@ -257,7 +283,15 @@ mod test {
 
     #[test]
     fn test_head() {
-        let response = head("http://localhost:3000/users", Headers::new(), &HeadHandler);
+        let response = head("http://127.0.0.1:3000/users", Headers::new(), &HeadHandler);
+        let result = extract_body_to_bytes(response.unwrap());
+
+        assert_eq!(result, b"");
+    }
+    
+    #[test]
+    fn test_head_domain() {
+        let response = head("http://test/users", Headers::new(), &HeadHandler);
         let result = extract_body_to_bytes(response.unwrap());
 
         assert_eq!(result, b"");
@@ -266,7 +300,7 @@ mod test {
     #[test]
     fn test_user_agent_not_provided() {
         let headers = Headers::new();
-        let response = get("http://localhost:3000/", headers, &UserAgentHandler);
+        let response = get("http://127.0.0.1:3000/", headers, &UserAgentHandler);
         let result = extract_body_to_string(response.unwrap());
 
         assert_eq!(result, "iron-test");
@@ -276,7 +310,7 @@ mod test {
     fn test_user_agent_provided() {
         let mut headers = Headers::new();
         headers.set(headers::UserAgent("CustomAgent/1.0".to_owned()));
-        let response = get("http://localhost:3000/", headers, &UserAgentHandler);
+        let response = get("http://127.0.0.1:3000/", headers, &UserAgentHandler);
         let result = extract_body_to_string(response.unwrap());
 
         assert_eq!(result, "CustomAgent/1.0");
@@ -284,9 +318,33 @@ mod test {
 
     #[test]
     fn test_percent_decoded_url() {
-        let response = head("http://localhost:3000/some path with spaces", Headers::new(), &HeadHandler);
+        let response = head("http://127.0.0.1:3000/some path with spaces", Headers::new(), &HeadHandler);
         let result = extract_body_to_bytes(response.unwrap());
 
         assert_eq!(result, b"");
+    }
+
+    #[test]
+    fn test_client_addr() {
+        let response = request(Some("127.0.0.1:1234".parse().unwrap()), method::Method::Get, "http://127.0.0.1:3000/", "", Headers::new(), &ClientAddrHandler);
+        let result = extract_body_to_string(response.unwrap());
+
+        assert_eq!(result, "127.0.0.1:1234");
+    }
+
+    #[test]
+    fn test_client_addr_default() {
+        let response = request(None, method::Method::Get, "http://127.0.0.1:3000/", "", Headers::new(), &ClientAddrHandler);
+        let result = extract_body_to_string(response.unwrap());
+
+        assert_eq!(result, "192.0.2.1:3000");
+    }
+
+    #[test]
+    fn test_server_addr() {
+        let response = request(None, method::Method::Get, "http://127.0.0.1:80/", "", Headers::new(), &ServerAddrHandler);
+        let result = extract_body_to_string(response.unwrap());
+
+        assert_eq!(result, "127.0.0.1:80");
     }
 }

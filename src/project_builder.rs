@@ -21,12 +21,12 @@ impl FileBuilder {
     }
 
     fn mk(&self) -> Result<(), String> {
-        try!(mkdir_recursive(&self.dirname()));
+        mkdir_recursive(&self.dirname())?;
 
-        let mut file = try!(
+        let mut file = 
             fs::File::create(&self.path)
                 .with_err_msg(format!("Could not create file; path={}",
-                                      self.path.display())));
+                                      self.path.display()))?;
 
         file.write_all(&self.body)
             .with_err_msg(format!("Could not write to file; path={}",
@@ -91,7 +91,7 @@ impl ProjectBuilder {
     pub fn build_with_result(&self) -> Result<(), String> {
         let _lock = self.lock.lock().unwrap();
         for file in self.files.iter() {
-            try!(file.mk());
+            file.mk()?;
         }
 
         Ok(())
