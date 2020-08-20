@@ -80,10 +80,10 @@ pub fn request<H: Handler>(client_addr: Option<SocketAddr>,
     let url = url::Url::parse(path).unwrap();
 
     // Lookup the host string, if it's a domain just convert it to 127.0.0.1, if it's an ip address keep it.
-    let server_ip : std::net::IpAddr = url.host_str().unwrap().parse().or_else(|_| "127.0.0.1".parse()).unwrap();
+    let server_ip = url.host_str().and_then(|host_str| host_str.parse().ok()).expect("url hostname must be valid ip address");
     let server_addr = SocketAddr::new(server_ip, url.port_or_known_default().unwrap_or(80));
 
-    let client_addr = client_addr.unwrap_or("127.0.0.1:3000".parse().unwrap());
+    let client_addr = client_addr.unwrap_or("192.0.2.1:3000".parse().unwrap());
     let mut stream = MockStream::new(client_addr, Cursor::new(buffer.as_bytes().to_vec()));
     let mut buf_reader = BufReader::new(&mut stream as &mut dyn NetworkStream);
 
@@ -289,14 +289,6 @@ mod test {
         assert_eq!(result, b"");
     }
     
-    #[test]
-    fn test_head_domain() {
-        let response = head("http://test/users", Headers::new(), &HeadHandler);
-        let result = extract_body_to_bytes(response.unwrap());
-
-        assert_eq!(result, b"");
-    }
-
     #[test]
     fn test_user_agent_not_provided() {
         let headers = Headers::new();
